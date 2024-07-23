@@ -321,6 +321,13 @@ struct LocalDerivationGoal : public DerivationGoal
      */
     StorePath makeFallbackPath(OutputNameView outputName);
 
+    /**
+     * Create common directories and set pathsInChroot
+     * common for all chroot platforms (so far Linux and FreeBSD).
+     * Must be called after chrootRootDir is set
+     */
+    void basicChrootSetup();
+
 protected:
     using DerivationGoal::DerivationGoal;
 

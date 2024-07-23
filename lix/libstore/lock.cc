@@ -203,7 +203,7 @@ bool useBuildUsers()
     #if __linux__
     static bool b = (settings.buildUsersGroup != "" || settings.autoAllocateUids) && getuid() == 0;
     return b;
-    #elif __APPLE__
+    #elif __APPLE__ || __FreeBSD__
     static bool b = settings.buildUsersGroup != "" && getuid() == 0;
     return b;
     #else

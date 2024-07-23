@@ -1,7 +1,7 @@
 ---
 name: sandbox-build-dir
 internalName: sandboxBuildDir
-platforms: [linux]
+platforms: [linux, freebsd]
 type: std::string
 default: /build
 ---

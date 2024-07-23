@@ -342,7 +342,10 @@ dependencies = [
 ]
 
 if host_machine.system() == 'freebsd'
-  dependencies += [ libprocstat ]
+  dependencies += [
+    libprocstat,
+    libjail,
+  ]
 endif
 
 libstore = library(

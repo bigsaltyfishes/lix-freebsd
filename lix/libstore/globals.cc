@@ -85,7 +85,7 @@ Settings::Settings()
         builders.setDefault(concatStringsSep(" ", ss));
     }
 
-#if defined(__linux__) && defined(SANDBOX_SHELL)
+#if (__linux__ || __FreeBSD__) && defined(SANDBOX_SHELL)
     sandboxPaths.setDefault(tokenizeString<StringSet>("/bin/sh=" SANDBOX_SHELL));
 #endif
 

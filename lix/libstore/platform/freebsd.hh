@@ -34,6 +34,9 @@ public:
     using LocalDerivationGoal::LocalDerivationGoal;
 
 private:
+    void prepareSandbox() override;
+
+    Pid startChild(std::function<void()> openSlave) override;
 };
 
 }

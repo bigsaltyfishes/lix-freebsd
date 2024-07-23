@@ -1,5 +1,6 @@
 {
   pkgs,
+  pkgsStatic,
   lib,
   stdenv,
   apple-sdk_11,
@@ -22,6 +23,7 @@
   doxygen,
   editline-lix ? __forDefaults.editline-lix,
   editline,
+  freebsd,
   git,
   gtest,
   jq,
@@ -225,6 +227,7 @@ stdenv.mkDerivation (finalAttrs: {
       # nativeBuildInputs since this should be a busybox executable on the host.
       "-Dsandbox-shell=${lib.getExe' busybox-sandbox-shell "busybox"}"
     ]
+    ++ lib.optionals hostPlatform.isFreeBSD [ "-Dsandbox-shell=${lib.getExe' pkgsStatic.bash "bash"}" ]
     ++ lib.optional hostPlatform.isStatic "-Denable-embedded-sandbox-shell=true"
     ++ lib.optional (finalAttrs.dontBuild && !lintInsteadOfBuild) "-Denable-build=false"
     ++ lib.optional lintInsteadOfBuild "-Dlix-clang-tidy-checks-path=${lix-clang-tidy}/lib/liblix-clang-tidy.so"
@@ -310,6 +313,7 @@ stdenv.mkDerivation (finalAttrs: {
     ++ lib.optionals (
       stdenv.hostPlatform.isDarwin && lib.versionOlder stdenv.hostPlatform.darwinSdkVersion "11.0"
     ) [ apple-sdk_11 ]
+    ++ lib.optional hostPlatform.isFreeBSD freebsd.libjail
     ++ lib.optional internalApiDocs rapidcheck
     ++ lib.optional hostPlatform.isx86_64 libcpuid
     # There have been issues building these dependencies

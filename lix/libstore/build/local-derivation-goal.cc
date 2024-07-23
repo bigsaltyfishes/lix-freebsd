@@ -54,6 +54,16 @@
 extern "C" int sandbox_init_with_parameters(const char *profile, uint64_t flags, const char *const parameters[], char **errorbuf);
 #endif
 
+#if __FreeBSD__
+#include <netlink/netlink.h>
+#include <netlink/netlink_route.h>
+#include <net/if.h>
+#include <sys/param.h>
+#include <sys/jail.h>
+#include <sys/sockio.h>
+#include <jail.h>
+#endif
+
 #include <pwd.h>
 #include <grp.h>
 #include <iostream>
@@ -201,7 +211,7 @@ retry:
 
     auto & localStore = getLocalStore();
     if (localStore.config().storeDir != localStore.config().realStoreDir.get()) {
-        #if __linux__
+        #if __linux__ || __FreeBSD__
             useChroot = true;
         #else
             throw Error("building using a diverted store is not supported on this platform");
@@ -240,6 +250,9 @@ retry:
             throw Error("cannot perform a sandboxed build because user namespaces are not available.\nIn this Lix's configuration, user namespaces are required due to either being non-root, or build-users-group being disabled without also enabling auto-allocate-uids");
         }
     }
+    #elif __FreeBSD__
+        // FreeBSD does not have user namespaces
+        usingUserNamespace = false;
     #endif
 
     actLock.reset();
@@ -805,7 +818,7 @@ Pid LocalDerivationGoal::startChild(std::function<void()> openSlave) {
 void LocalDerivationGoal::initTmpDir() {
     /* In a sandbox, for determinism, always use the same temporary
        directory. */
-#if __linux__
+#if __linux__ || __FreeBSD__
     tmpDirInSandbox = useChroot ? settings.sandboxBuildDir : tmpDir;
 #else
     tmpDirInSandbox = tmpDir;
@@ -1634,6 +1647,79 @@ void LocalDerivationGoal::runChild()
 
             setUser = false;
         }
+#elif __FreeBSD__
+    if (useChroot) {
+        if (privateNetwork) {
+             if (jail_setv(JAIL_CREATE | JAIL_ATTACH,
+                    "path", chrootRootDir.c_str(),
+                    // TODO: Make our own ruleset
+                    "vnet", "new",
+                    NULL
+            ) < 0) {
+                throw SysError("Failed to create jail (isolated network)");
+            }
+        } else {
+            if (jail_setv(JAIL_CREATE | JAIL_ATTACH,
+                    "path", chrootRootDir.c_str(),
+                    "host.hostname", "localhost",
+                    "ip4", "inherit",
+                    "ip6", "inherit",
+                    "allow.raw_sockets", "true",
+                    NULL
+            ) < 0) {
+                throw SysError("Failed to create jail (fixed-output derivation)");
+            }
+        }
+
+        if (privateNetwork) {
+            AutoCloseFD fd(socket(PF_INET, SOCK_DGRAM, 0));
+            if (!fd) throw SysError("cannot open IP socket");
+
+            struct ifreq ifr;
+            strcpy(ifr.ifr_name, "lo0");
+            ifr.ifr_flags = IFF_UP | IFF_LOOPBACK;
+            if (ioctl(fd.get(), SIOCSIFFLAGS, &ifr) == -1)
+                throw SysError("cannot set loopback interface flags");
+
+            AutoCloseFD netlink(socket(PF_NETLINK, SOCK_RAW, NETLINK_ROUTE));
+            struct {
+                struct nlmsghdr nl_hdr;
+                struct ifaddrmsg addr_msg;
+                struct nlattr tl;
+                uint8_t addr[4];
+            } msg;
+
+            // Many of the fields are deprecated or not useful to us,
+            // just zero them all here
+            memset(&msg, 0, sizeof(msg));
+
+            msg.nl_hdr.nlmsg_len = sizeof(msg);
+            msg.nl_hdr.nlmsg_type = NL_RTM_NEWADDR;
+            msg.nl_hdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+
+            msg.addr_msg.ifa_family = AF_INET;
+            msg.addr_msg.ifa_prefixlen = 8;
+            msg.addr_msg.ifa_index = if_nametoindex("lo0");
+
+            msg.tl.nla_len = sizeof(struct nlattr) + 4;
+            msg.tl.nla_type = IFLA_ADDRESS;
+            memcpy(msg.addr, new uint8_t[]{127, 0, 0, 1}, 4);
+
+            send(netlink.get(), (void *)&msg, sizeof(msg), 0);
+
+            struct {
+                struct nlmsghdr nl_hdr;
+                struct nlmsgerr err;
+            } response;
+            size_t n = recv(netlink.get(), &response, sizeof(response), 0);
+
+            if (n < sizeof(response) || response.nl_hdr.nlmsg_type != NLMSG_ERROR) {
+                throw SysError("Invalid repsonse when setting loopback interface address");
+            } else if (response.err.error != 0) {
+                throw SysError(response.err.error, "Could not set loopback interface address");
+            }
+        }
+    }
 #endif
 
         if (chdir(tmpDirInSandbox.c_str()) == -1)
@@ -2651,5 +2737,79 @@ StorePath LocalDerivationGoal::makeFallbackPath(const StorePath & path)
         Hash(HashType::SHA256), path.name());
 }
 
+void LocalDerivationGoal::basicChrootSetup()
+{
+    // Don't set chrootRootDir here because on FreeBSD we want to
+    // unmount before deletePath
+    deletePath(chrootRootDir);
+
+    /* Clean up the chroot directory automatically. */
+    autoDelChroot = std::make_shared<AutoDelete>(chrootRootDir);
+
+    printMsg(lvlChatty, "setting up chroot environment in '%1%'", chrootRootDir);
+
+    // FIXME: make this 0700
+    if (mkdir(chrootRootDir.c_str(), buildUser && buildUser->getUIDCount() != 1 ? 0755 : 0750) == -1)
+        throw SysError("cannot create '%1%'", chrootRootDir);
+
+    if (buildUser && chown(chrootRootDir.c_str(), buildUser->getUIDCount() != 1 ? buildUser->getUID() : 0, buildUser->getGID()) == -1)
+        throw SysError("cannot change ownership of '%1%'", chrootRootDir);
+
+    /* Create a writable /tmp in the chroot.  Many builders need
+       this.  (Of course they should really respect $TMPDIR
+       instead.) */
+    Path chrootTmpDir = chrootRootDir + "/tmp";
+    createDirs(chrootTmpDir);
+    chmodPath(chrootTmpDir, 01777);
+
+    /* Create a /etc/passwd with entries for the build user and the
+       nobody account.  The latter is kind of a hack to support
+       Samba-in-QEMU. */
+    createDirs(chrootRootDir + "/etc");
+    if (parsedDrv->useUidRange())
+        chownToBuilder(chrootRootDir + "/etc");
+
+    if (parsedDrv->useUidRange() && (!buildUser || buildUser->getUIDCount() < 65536))
+        throw Error("feature 'uid-range' requires the setting '%s' to be enabled", settings.autoAllocateUids.name);
+
+    /* Create /etc/hosts with localhost entry. */
+    if (derivationType->isSandboxed())
+        writeFile(chrootRootDir + "/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n");
+
+    /* Make the closure of the inputs available in the chroot,
+       rather than the whole Nix store.  This prevents any access
+       to undeclared dependencies.  Directories are bind-mounted,
+       while other inputs are hard-linked (since only directories
+       can be bind-mounted).  !!! As an extra security
+       precaution, make the fake Nix store only writable by the
+       build user. */
+    Path chrootStoreDir = chrootRootDir + worker.store.config().storeDir;
+    createDirs(chrootStoreDir);
+    chmodPath(chrootStoreDir, 01775);
+
+    if (buildUser && chown(chrootStoreDir.c_str(), 0, buildUser->getGID()) == -1)
+        throw SysError("cannot change ownership of '%1%'", chrootStoreDir);
+
+    for (auto & i : inputPaths) {
+        auto p = worker.store.printStorePath(i);
+        Path r = worker.store.toRealPath(p);
+        pathsInChroot.insert_or_assign(p, r);
+    }
+
+    /* If we're repairing, checking or rebuilding part of a
+       multiple-outputs derivation, it's possible that we're
+       rebuilding a path that is in settings.sandbox-paths
+       (typically the dependencies of /bin/sh).  Throw them
+       out. */
+    for (auto & i : drv->outputsAndOptPaths(worker.store)) {
+        /* If the name isn't known a priori (i.e. floating
+           content-addressed derivation), the temporary location we use
+           should be fresh.  Freshness means it is impossible that the path
+           is already in the sandbox, so we don't need to worry about
+           removing it.  */
+        if (i.second.second)
+            pathsInChroot.erase(worker.store.printStorePath(*i.second.second));
+    }
+}
 
 }

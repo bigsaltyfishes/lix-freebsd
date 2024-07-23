@@ -353,7 +353,10 @@ pegtl = dependency(
 nlohmann_json = dependency('nlohmann_json', required : true, include_type : 'system')
 
 if is_freebsd
+  # libprocstat is in nixpkgs freebsd.libc, so it will always exist
   libprocstat = declare_dependency(link_args : [ '-lprocstat' ])
+  # libjail is not in freebsd.libc, but there's no discovery mechanism
+  libjail = declare_dependency(link_args : [ '-ljail' ])
 endif
 
 #

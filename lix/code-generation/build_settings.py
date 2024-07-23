@@ -52,6 +52,7 @@ class Setting(NamedTuple):
 platform_names = {
     'darwin': 'Darwin',
     'linux': 'Linux',
+    'freebsd': 'FreeBSD',
 }
 
 def nix_conf_literal(v):

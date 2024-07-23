@@ -9,6 +9,7 @@
 #include "lix/libutil/file-system.hh"
 #include "lix/libutil/finally.hh"
 #include "lix/libutil/logging.hh"
+#include "lix/libutil/mount.hh"
 #include "lix/libutil/serialise.hh"
 #include "lix/libutil/signals.hh"
 #include "lix/libutil/strings.hh"
@@ -537,6 +538,9 @@ AutoDelete::~AutoDelete()
 {
     try {
         if (del) {
+#if __FreeBSD__
+            unmountAll(path);
+#endif
             if (recursive)
                 deletePath(path);
             else {
