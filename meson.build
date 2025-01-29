@@ -232,6 +232,12 @@ gc_opt = get_option('gc').disable_if(
   error_message: 'gc does far too many memory crimes for ASan'
 )
 boehm = dependency('bdw-gc', required : gc_opt, version : '>=8.2.6', include_type : 'system')
+boehm_threaded = dependency('bdw-gc-threaded', 
+    required : (gc_opt.enabled() and host_machine.system() == 'freebsd'), 
+    version : '>=8.2.6', 
+    include_type : 'system'
+)
+
 configdata += {
   'HAVE_BOEHMGC': boehm.found().to_int(),
 }
@@ -267,54 +273,22 @@ brotli = [
 openssl = dependency('libcrypto', 'openssl', required : true, include_type : 'system')
 ncurses = dependency('ncurses', required : true, include_type : 'system')
 
-# FIXME: confirm we actually support such old versions of aws-sdk-cpp
-aws_sdk = dependency('aws-cpp-sdk-core', required : false, version : '>=1.8', include_type : 'system')
-aws_sdk_transfer = dependency(
-  'aws-cpp-sdk-transfer',
-  required : aws_sdk.found(),
-  fallback : ['aws_sdk', 'aws_cpp_sdk_transfer_dep'],
-  include_type : 'system',
-)
-if aws_sdk.found()
-  # The AWS pkg-config adds -std=c++11.
-  # https://github.com/aws/aws-sdk-cpp/issues/2673
-  aws_sdk = aws_sdk.partial_dependency(
-    compile_args : false,
-    includes : true,
-    link_args : true,
-    links : true,
-    sources : true,
-  )
-  aws_sdk_transfer = aws_sdk_transfer.partial_dependency(
-    compile_args : false,
-    includes : true,
-    link_args : true,
-    links : true,
-    sources : true,
-  )
-endif
-
-aws_s3 = dependency(
-  'aws-cpp-sdk-s3',
-  required : aws_sdk.found(),
-  fallback : ['aws_sdk', 'aws_cpp_sdk_s3_dep'],
-  include_type : 'system',
-)
-if aws_s3.found()
-  # The AWS pkg-config adds -std=c++11.
-  # https://github.com/aws/aws-sdk-cpp/issues/2673
-  aws_s3 = aws_s3.partial_dependency(
-    compile_args : false,
-    includes : true,
-    link_args : true,
-    links : true,
-    sources : true,
-  )
-endif
-
+aws_s3 = dependency('aws-cpp-sdk-s3', required : false)
 configdata += {
   'ENABLE_S3': aws_s3.found().to_int(),
 }
+if aws_s3.found()
+  aws_s3 = declare_dependency(
+    include_directories: include_directories(aws_s3.get_variable('includedir')),
+    link_args: [
+      '-L' + aws_s3.get_variable('libdir'),
+      '-laws-cpp-sdk-transfer',
+      '-laws-cpp-sdk-s3',
+      '-laws-cpp-sdk-core',
+      '-laws-crt-cpp',
+    ],
+  ).as_system('system')
+endif
 
 sqlite = dependency('sqlite3', 'sqlite', version : '>=3.6.19', required : true, include_type : 'system')
 
@@ -325,6 +299,9 @@ curl = dependency('libcurl', 'curl', required : true, include_type : 'system')
 editline = dependency('libeditline', 'editline', version : '>=1.14', required : true, include_type : 'system')
 
 lowdown = dependency('lowdown', version : '>=0.9.0', required : true, include_type : 'system')
+configdata += {
+  'HAVE_LOWDOWN_1_4': lowdown.version().version_compare('>= 1.4.0').to_int(),
+}
 
 # HACK(Qyriad): rapidcheck's pkg-config doesn't include the libs lol
 # Note: technically we 'check' for rapidcheck twice, for the internal-api-docs handling above,

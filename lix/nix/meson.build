@@ -10,13 +10,29 @@ nix_generated_headers = [
 # So run_command() it is.
 # NOTE(Qyriad): This corresponds to the previous buildsystem's `src/nix/doc/files/%.md` rule,
 # which as far as I can tell was only used for this file.
-run_command(
-  installcmd,
-  '-D',
-  meson.project_source_root() / 'doc/manual/src/command-ref/files/profiles.md',
-  meson.current_build_dir() / 'doc/files/profiles.md',
-  check : true,
-)
+if host_machine.system() == 'freebsd'
+  run_command(
+    installcmd,
+    '-d',
+    meson.current_build_dir() / 'doc/files',
+    check : true,
+  )
+  run_command(
+    installcmd,
+    meson.project_source_root() / 'doc/manual/src/command-ref/files/profiles.md',
+    meson.current_build_dir() / 'doc/files/profiles.md',
+    check : true,
+  )
+else
+  run_command(
+    installcmd,
+    '-D',
+    meson.project_source_root() / 'doc/manual/src/command-ref/files/profiles.md',
+    meson.current_build_dir() / 'doc/files/profiles.md',
+    check : true,
+  )
+endif
+
 nix_generated_headers += gen_header.process(
   meson.current_build_dir() / 'doc/files/profiles.md',
   preserve_path_from : meson.current_build_dir(),

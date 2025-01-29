@@ -284,7 +284,6 @@ libutil = library(
   deprecated_features_impl_header,
   libutil_settings_headers,
   dependencies : [
-    aws_sdk,
     aws_s3,
     boehm,
     boost,

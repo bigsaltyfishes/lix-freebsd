@@ -334,9 +334,7 @@ dependencies = [
   sodium,
   curl,
   openssl,
-  aws_sdk,
   aws_s3,
-  aws_sdk_transfer,
   nlohmann_json,
   kj,
 ]
